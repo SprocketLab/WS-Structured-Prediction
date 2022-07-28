@@ -1,6 +1,6 @@
 import numpy as np
 
-def pseudo_dist(u,v, tk):
+def pseudo_dist(u, v, tk):
     return np.sqrt(np.linalg.norm(u[:tk]-v[:tk])**2 - np.linalg.norm(u[tk:]-v[tk:])**2)
 
 def pseudo_embedding(D, dim=0):
@@ -32,7 +32,7 @@ def pseudo_embedding(D, dim=0):
         idx_neg = np.intersect1d(idx_top, idx_neg)
 
     pdim, ndim = len(idx_pos), len(idx_neg)
-    print(pdim,ndim) 
+    #print("pdim, ndim", pdim, ndim)
 
     X = v[:, :pdim+ndim] @ np.sqrt(np.abs(np.diag(w[:pdim+ndim])))
     return np.concatenate((np.expand_dims(np.zeros(pdim+ndim), axis=0), X), axis=0), pdim
