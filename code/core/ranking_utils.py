@@ -5,9 +5,10 @@ import itertools
 import torch
 from scipy.stats import kendalltau
 from collections.abc import Sequence
-from ranking_digraph import RankingDiGraph
+from .ranking_digraph import RankingDiGraph
 from collections import defaultdict
 import logging
+
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
@@ -27,17 +28,16 @@ class RankingUtils:
         self.items = list(range(d))
         self.unique_pairs = []
         for i in range(d):
-            for j in range(i+1, d):
+            for j in range(i + 1, d):
                 self.unique_pairs.append((i, j))
 
         self.pair_index_map = {}
         k = 0
         for i in range(d):
-            for j in range(i+1, d):
+            for j in range(i + 1, d):
                 self.pair_index_map[self.pair_key(self.items[i], self.items[j])] = k
                 k += 1
         self.dist_counts = None
-
 
     def get_unique_pairs(self):
         return self.unique_pairs
@@ -65,10 +65,10 @@ class RankingUtils:
         -------
         z: d(d-1)/2 dim, pair signs, for "i,j", if r[i] < r[j] --> 1, otherwise -1 (and then masked)
         """
-        u = len(r)*(len(r)-1)//2
+        u = len(r) * (len(r) - 1) // 2
         z = np.zeros(u)
         for i in range(len(r)):
-            for j in range(i+1, len(r)):
+            for j in range(i + 1, len(r)):
                 a, b = r[i], r[j]
                 pk = self.pair_key(a, b)
                 if pk in self.pair_index_map:
@@ -90,7 +90,7 @@ class RankingUtils:
         -------
 
         """
-        return str(a)+','+str(b)
+        return str(a) + "," + str(b)
 
     def Z(self, r1, r2):
         """
@@ -130,9 +130,9 @@ class RankingUtils:
         -------
         """
         D = np.zeros(len(r1.z))
-        #p = 1.0/len(r1) #len(z)
-        #p = 1.0/len(z)
-        p = 1e-1 #1 # 0.5 #1e-2
+        # p = 1.0/len(r1) #len(z)
+        # p = 1.0/len(z)
+        p = 1e-1  # 1 # 0.5 #1e-2
 
         n = 0
         for i in range(len(D)):
@@ -144,11 +144,11 @@ class RankingUtils:
                     D[i] = p
                 n += 1
             else:
-                D[i] = 1.0/len(D)
+                D[i] = 1.0 / len(D)
 
         d = sum(D)
         if normalize:
-            d = float(d) /n
+            d = float(d) / n
         return d
 
     def get_pair_wise_dists(self, lstRanks):
@@ -162,9 +162,9 @@ class RankingUtils:
         the matrix of pairwise kendall tau distance ((p, p) dim)
         """
         p = len(lstRanks)
-        D = np.zeros((p,p))
+        D = np.zeros((p, p))
         for i in range(p):
-            for j in range(i+1,p):
+            for j in range(i + 1, p):
                 d = self.kendall_tau_distance(lstRanks[i], lstRanks[j])
                 D[i][j] = d
                 D[j][i] = d
@@ -208,23 +208,23 @@ class RankingUtils:
         if weights is None:
             z_agg = sum([r.z for r in lstRanks])
         else:
-            z_agg = sum([lstRanks[i].z*weights[i] for i in range(len(lstRanks))])
+            z_agg = sum([lstRanks[i].z * weights[i] for i in range(len(lstRanks))])
 
         # re-coding the signs based on z_agg
         z = []
         for x in z_agg:
-            if x == 0: # tie
+            if x == 0:  # tie
                 z.append(0)
-            elif x > 0: # win
+            elif x > 0:  # win
                 z.append(1)
-            elif x < 0: # lose
+            elif x < 0:  # lose
                 z.append(-1)
         positions = defaultdict(list)
         logger.debug("z_agg {}".format(z_agg))
 
         # calculate how many times each items lose or tie
         for i in self.items:
-            l = 0 # the lost or tie count of item i
+            l = 0  # the lost or tie count of item i
             for j in self.items:
                 if i < j:
                     pk = self.pair_index_map[self.pair_key(i, j)]
@@ -244,7 +244,7 @@ class RankingUtils:
                 continue
             if len(positions[k]) == 1:
                 pi_hat.append(positions[k][0])
-            else: # ties on the same lose or tie count --> randomly shuffle
+            else:  # ties on the same lose or tie count --> randomly shuffle
                 random.shuffle(positions[k])
                 pi_hat.extend(positions[k])
 
@@ -254,7 +254,6 @@ class RankingUtils:
         pi_hat = pi_hat + left
 
         return Ranking(pi_hat, self)
-
 
     def pair_wise_majority(self, lstRanks, weights=None):
         """
@@ -273,10 +272,12 @@ class RankingUtils:
             confidence = sum([np.abs(r.z) for r in lstRanks])
         else:
             z_agg = sum([lstRanks[i].z * weights[i] for i in range(len(lstRanks))])
-            confidence = sum([np.abs(lstRanks[i].z*weights[i]) for i in range(len(lstRanks))])
+            confidence = sum(
+                [np.abs(lstRanks[i].z * weights[i]) for i in range(len(lstRanks))]
+            )
 
         # re-coding the signs based on z_agg
-        z  = []
+        z = []
         for x in z_agg:
             if x == 0:
                 z.append(0)
@@ -285,7 +286,7 @@ class RankingUtils:
             elif x < 0:
                 z.append(-1)
 
-        return self.z_to_ranking(z,z_agg, confidence)
+        return self.z_to_ranking(z, z_agg, confidence)
 
     def z_to_ranking(self, z, w=None, confidence=None):
         """
@@ -355,7 +356,9 @@ class RankingUtils:
         -------
 
         """
-        return np.mean([self.kendall_tau_distance(Y1[i], Y2[i], normalize) for i in range(len(Y1))])
+        return np.mean(
+            [self.kendall_tau_distance(Y1[i], Y2[i], normalize) for i in range(len(Y1))]
+        )
 
     def build_dist_counts(self):
         """
@@ -365,19 +368,19 @@ class RankingUtils:
 
         """
         d = len(self.items)
-        p = (d*(d-1))//2
-        D = np.zeros((d+2, p+1))
+        p = (d * (d - 1)) // 2
+        D = np.zeros((d + 2, p + 1))
 
         D[2][0] = 1
         D[2][1] = 1
         for i in range(3, d + 1):
             prev = 0
             k = (i * (i - 1)) // 2
-            for j in range(k+1):
+            for j in range(k + 1):
                 if j < i:
-                    D[i][j] = prev + D[i-1][j]
+                    D[i][j] = prev + D[i - 1][j]
                 else:
-                    D[i][j] = prev + D[i-1][j] - D[i-1][j-i]
+                    D[i][j] = prev + D[i - 1][j] - D[i - 1][j - i]
                 prev = D[i][j]
         return D
 
@@ -425,7 +428,10 @@ class RankingUtils:
         -------
 
         """
-        lstInts = [self.perm2int_map["".join([str(idx) for idx in r.permutation])] for r in lstRanks]
+        lstInts = [
+            self.perm2int_map["".join([str(idx) for idx in r.permutation])]
+            for r in lstRanks
+        ]
         return lstInts
 
     def int2perm(self, lstInts):
@@ -439,8 +445,9 @@ class RankingUtils:
         -------
 
         """
-        lstRanks= [Ranking(self.int2perm_map[i], r_utils=self) for i in lstInts]
+        lstRanks = [Ranking(self.int2perm_map[i], r_utils=self) for i in lstInts]
         return lstRanks
+
 
 class Ranking(Sequence):
     def __init__(self, permutation, r_utils=None, z=None):
@@ -475,15 +482,14 @@ class Ranking(Sequence):
 
     def __str__(self):
         return str(self.permutation)
-    
+
     def __hash__(self):
         return hash(str(self.permutation))
 
-    def __eq__(self,other):
-        if not isinstance(other, type(self)): return NotImplemented
+    def __eq__(self, other):
+        if not isinstance(other, type(self)):
+            return NotImplemented
         return str(self) == str(other)
-
-
 
     def reverse(self):
         """
@@ -528,7 +534,7 @@ class Ranking(Sequence):
         self.permutation = lst1 + lst_items
 
         # self.mask_permutation: zero mask based on whether included or not
-        self.mask_permutation = [[0]*len(lst1)] + [[1]*len(lst_items)]
+        self.mask_permutation = [[0] * len(lst1)] + [[1] * len(lst_items)]
 
 
 def perm2ranking(Y, d):

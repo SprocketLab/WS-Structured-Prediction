@@ -1,7 +1,8 @@
-from ws_lib import *
-from mallows import *
+from .ws_lib import *
+from .mallows import *
 import numpy as np
 import logging
+
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
@@ -11,7 +12,6 @@ class WeakSupRanking:
         self.thetas = None
         self.r_utils = r_utils
 
-   
     def train(self, conf, L, numLFs=None):
         """
 
@@ -24,7 +24,7 @@ class WeakSupRanking:
         Returns
         -------
 
-        """ 
+        """
         n = len(L)  # the number of examples
         if numLFs is None:
             m = len(L[0])
@@ -33,18 +33,18 @@ class WeakSupRanking:
 
         d = len(L[0][0])
 
-        if conf['train_method'] == 'triplet' or conf['train_method'] == 'triplet_opt':
+        if conf["train_method"] == "triplet" or conf["train_method"] == "triplet_opt":
             # TODO: handle the case when num LF  is not multiple of 3
             expected_dists = np.zeros(m)
             i = 0
-            order, D = self.order_LFs_on_correlation(L,m)
-            
-            #order = np.arange(m)
-            #D = None
+            order, D = self.order_LFs_on_correlation(L, m)
+
+            # order = np.arange(m)
+            # D = None
 
             # solve 3 variable systems iteratively
-            while i < m-2:
-                l1, l2, l3 = order[i], order[i+1], order[i+2]
+            while i < m - 2:
+                l1, l2, l3 = order[i], order[i + 1], order[i + 2]
                 ac3 = self.solve_triplet(L, l1, l2, l3, D)
                 expected_dists[l1] = ac3[0]
                 expected_dists[l2] = ac3[1]
@@ -52,28 +52,34 @@ class WeakSupRanking:
 
                 i += 3
 
-            if conf['train_method'] == 'triplet':
+            if conf["train_method"] == "triplet":
                 self.thetas = 1.0 / np.array(expected_dists)
 
-            elif conf['train_method'] == 'triplet_opt':
+            elif conf["train_method"] == "triplet_opt":
                 mlw = Mallows(self.r_utils, 1.0)
                 logger.info("expected_dists {}".format(expected_dists))
-                self.thetas = np.array([mlw.estimate_theta(d, expected_dists[i])
-                                        for i in range(len(expected_dists))])
+                self.thetas = np.array(
+                    [
+                        mlw.estimate_theta(d, expected_dists[i])
+                        for i in range(len(expected_dists))
+                    ]
+                )
                 self.thetas = self.thetas.clip(1e-1, 100)
-        
-        elif (conf['train_method'] == 'median_triplet') or (conf['train_method'] == 'median_triplet_opt'):
+
+        elif (conf["train_method"] == "median_triplet") or (
+            conf["train_method"] == "median_triplet_opt"
+        ):
             expected_dists_dict = {}
             for lf_idx in range(m):
                 expected_dists_dict[lf_idx] = []
 
-            order, D = self.order_LFs_on_correlation(L,m)
-            
+            order, D = self.order_LFs_on_correlation(L, m)
+
             for i in range(m):
                 l1 = order[i]
-                for j in range(i+1, m):
+                for j in range(i + 1, m):
                     l2 = order[j]
-                    for k in range(j+1, m):
+                    for k in range(j + 1, m):
                         l3 = order[k]
                         ac3 = self.solve_triplet(L, l1, l2, l3, D)
                         expected_dists_dict[l1].append(ac3[0])
@@ -84,14 +90,18 @@ class WeakSupRanking:
             for lf_idx in range(m):
                 expected_dists[lf_idx] = np.median(expected_dists_dict[lf_idx])
 
-            if conf['train_method'] == 'median_triplet':
+            if conf["train_method"] == "median_triplet":
                 self.thetas = 1.0 / np.array(expected_dists)
 
-            elif conf['train_method'] == 'median_triplet_opt':
+            elif conf["train_method"] == "median_triplet_opt":
                 mlw = Mallows(self.r_utils, 1.0)
                 logger.info("expected_dists {}".format(expected_dists))
-                self.thetas = np.array([mlw.estimate_theta(d, expected_dists[i])
-                                        for i in range(len(expected_dists))])
+                self.thetas = np.array(
+                    [
+                        mlw.estimate_theta(d, expected_dists[i])
+                        for i in range(len(expected_dists))
+                    ]
+                )
                 self.thetas = self.thetas.clip(1e-1, 100)
 
     def mean_distance(self, L, l1, l2, normalize=False):
@@ -110,12 +120,19 @@ class WeakSupRanking:
         """
         n = len(L)
 
-        mu = np.mean([self.r_utils.kendall_tau_distance(L[i][l1], L[i][l2], normalize=normalize)
-                      for i in range(n)],axis=0)
+        mu = np.mean(
+            [
+                self.r_utils.kendall_tau_distance(
+                    L[i][l1], L[i][l2], normalize=normalize
+                )
+                for i in range(n)
+            ],
+            axis=0,
+        )
         logger.info("mu {}".format(mu))
         return mu
 
-    def order_LFs_on_correlation(self,L,numLFs=None):
+    def order_LFs_on_correlation(self, L, numLFs=None):
         """
         Parameters
         ----------
@@ -126,12 +143,12 @@ class WeakSupRanking:
         order: order of label functions based on their max distance
         D: the distance matrix of label functions
         """
-        if(numLFs):
+        if numLFs:
             m = numLFs
         else:
             m = len(L[0])  # the number of label functions
         dists = []  # the list of triplets (i, j, distance(i,j))
-        D = np.zeros((m, m)) # the mean distance between label functions
+        D = np.zeros((m, m))  # the mean distance between label functions
 
         # fill out the distance matrix
         for i in range(m):
@@ -180,7 +197,7 @@ class WeakSupRanking:
         ac3 = solve_3_var_system_sum(mu_12, mu_23, mu_31)
         return ac3
 
-    def infer_ranking(self,conf,L,numLFs=None,lst_D=None):
+    def infer_ranking(self, conf, L, numLFs=None, lst_D=None):
         """
 
         Parameters
@@ -201,37 +218,57 @@ class WeakSupRanking:
 
         Y_tilde = None
         n = len(L)
-        
+
         # label inference based on kemeny rule
-        if conf['inference_rule'] =='kemeny':
+        if conf["inference_rule"] == "kemeny":
             if lst_D is None:
                 Y_tilde = [self.r_utils.kemeny(L[i][:k]) for i in range(n)]
             else:
-                Y_tilde = [self.r_utils.kemeny(L[i][:k],lst_D[i][:k, :k]) for i in range(n)]
+                Y_tilde = [
+                    self.r_utils.kemeny(L[i][:k], lst_D[i][:k, :k]) for i in range(n)
+                ]
 
         # label inference based on weighted kemeny rule
-        elif conf['inference_rule'] == 'weighted_kemeny':
+        elif conf["inference_rule"] == "weighted_kemeny":
             if lst_D is None:
-                Y_tilde = [self.r_utils.weighted_kemeny(L[i][:k], self.thetas[:k]) for i in range(n)]
+                Y_tilde = [
+                    self.r_utils.weighted_kemeny(L[i][:k], self.thetas[:k])
+                    for i in range(n)
+                ]
             else:
-                Y_tilde = [self.r_utils.weighted_kemeny(L[i][:k], self.thetas[:k], lst_D[i][:k,:k])
-                           for i in range(n)]
+                Y_tilde = [
+                    self.r_utils.weighted_kemeny(
+                        L[i][:k], self.thetas[:k], lst_D[i][:k, :k]
+                    )
+                    for i in range(n)
+                ]
 
         # label inference based on pairwise majority
-        elif conf['inference_rule'] == 'pairwise_majority':
-            Y_tilde = [self.r_utils.pair_wise_majority(L[i][:k], weights=None) for i in range(n)]
+        elif conf["inference_rule"] == "pairwise_majority":
+            Y_tilde = [
+                self.r_utils.pair_wise_majority(L[i][:k], weights=None)
+                for i in range(n)
+            ]
 
         # label inference based on weighted pairwise majority
-        elif conf['inference_rule'] == 'weighted_pairwise_majority':
-            Y_tilde = [self.r_utils.pair_wise_majority(L[i][:k], weights=self.thetas[:k]) for i in range(n)]
+        elif conf["inference_rule"] == "weighted_pairwise_majority":
+            Y_tilde = [
+                self.r_utils.pair_wise_majority(L[i][:k], weights=self.thetas[:k])
+                for i in range(n)
+            ]
 
         # label inference based on position estimation
-        elif conf['inference_rule'] == 'position_estimation':
-            Y_tilde = [self.r_utils.pos_est_majority(L[i][:k], weights=None) for i in range(n)]
+        elif conf["inference_rule"] == "position_estimation":
+            Y_tilde = [
+                self.r_utils.pos_est_majority(L[i][:k], weights=None) for i in range(n)
+            ]
 
         # label inference based on weighted position estimation
-        elif conf['inference_rule']=='weighted_position_estimation':
-            Y_tilde = [self.r_utils.pos_est_majority(L[i][:k], weights=self.thetas[:k]) for i in range(n)]
+        elif conf["inference_rule"] == "weighted_position_estimation":
+            Y_tilde = [
+                self.r_utils.pos_est_majority(L[i][:k], weights=self.thetas[:k])
+                for i in range(n)
+            ]
 
         h = [y.mask_items([]) for y in Y_tilde]
 
