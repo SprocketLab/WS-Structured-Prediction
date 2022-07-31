@@ -226,8 +226,8 @@ def tensor_decomp_x3(w, x1, x2, x3, k=None, debug=False, return_errs=False):
     if debug:
         print(f"[TENSOR_DECOMP] error:", err)
     if return_errs:
-        return weights, x3, err
-    return weights, x3
+        return weights, factors, err
+    return weights, factors
 
 
 def mixture_tensor_decomp_full(w, x1, x2, x3, k=None, debug=False, return_errs=False):

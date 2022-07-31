@@ -128,7 +128,7 @@ def main(k=2, d=4, n=10000, max_m=3, debug=False):
 
     # w = np.ones(k) / k  # TODO de-uniformize the prior
     w = np.sort(np.array([0.25, 0.75]))  # Always sort
-    theta_star = np.array([0.99, 0.9, 1.0])  # TODO Change
+    theta_star = np.array([0.6, 0.3, 0.8])  # TODO Change
 
     ###### Embed the entire label space ######
     Yspace, Yspace_emb, tk, map_obj_id = compute_pse_space(d)
@@ -217,7 +217,7 @@ def main(k=2, d=4, n=10000, max_m=3, debug=False):
     )
     T_pos_hat = np.einsum(
         "i,ji,ki,li->jkl",
-        np.ones(n) / n,
+        w_rec,
         mu_hat_pos1,
         mu_hat_pos2,
         mu_hat_pos3,
@@ -244,7 +244,7 @@ def main(k=2, d=4, n=10000, max_m=3, debug=False):
     )
     T_neg_hat = np.einsum(
         "i,ji,ki,li->jkl",
-        np.ones(n) / n,
+        w_rec,
         mu_hat_neg1,
         mu_hat_neg2,
         mu_hat_neg3,
