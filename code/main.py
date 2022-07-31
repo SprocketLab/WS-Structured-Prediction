@@ -2,19 +2,14 @@ import fire
 import sys
 import os
 import core.pse as pse
-import core.utils as utils
 import numpy as np
 import itertools
-import math
-import networkx as nx
-import matplotlib.pyplot as plt
 
-from core.ranking_utils import RankingUtils, perm2ranking
-from core.mallows import Mallows
-from core.ws_ranking import *
+from core.ranking_utils import RankingUtils
+from core.ws_ranking import Ranking
 import numpy as np
 
-from tensorly.decomposition import parafac
+from tensor_decomp import mixture_tensor_decomp_full
 import tensorly as tl
 
 
@@ -73,26 +68,6 @@ def compute_pse_space(d, dim=0):
     return Yspace, Yspace_emb, tk, map_obj_id
 
 
-def three_tensor_prod(w, x, y, z):
-    """
-    Three-way outer product
-    """
-    r = x.shape[0]
-    M3 = np.zeros([r, r, r])
-    if len(w.shape) == 0:
-        for i in range(x.shape[0]):
-            for j in range(y.shape[0]):
-                for k in range(z.shape[0]):
-                    M3[i, j, k] += w * x[i] * y[j] * z[k]
-    else:
-        for a in range(w.shape[0]):
-            for i in range(x.shape[0]):
-                for j in range(y.shape[0]):
-                    for k in range(z.shape[0]):
-                        M3[i, j, k] += w[a] * x[i, a] * y[j, a] * z[k, a]
-    return M3
-
-
 def get_estimated_w_mu(L_emb, k):
     """
     L_emb: LF output embeddings
@@ -148,12 +123,12 @@ def get_probability_table(space, centers, theta, tk):
     return probabilities
 
 
-def main(k=2, d=5, n=1000, max_m=3, debug=True):
+def main(k=2, d=4, n=10000, max_m=3, debug=False):
     """ """
 
     # w = np.ones(k) / k  # TODO de-uniformize the prior
-    w = np.sort(np.array([0.5, 0.5]))  # Always sort
-    theta_star = np.array([0.8, 0.9, 1.0])  # TODO Change
+    w = np.sort(np.array([0.25, 0.75]))  # Always sort
+    theta_star = np.array([0.99, 0.9, 1.0])  # TODO Change
 
     ###### Embed the entire label space ######
     Yspace, Yspace_emb, tk, map_obj_id = compute_pse_space(d)
@@ -168,6 +143,43 @@ def main(k=2, d=5, n=1000, max_m=3, debug=True):
     # Compute the full probability table exactly
     probs = get_probability_table(Yspace_emb, np.unique(Y_emb, axis=0), theta_star, tk)
 
+    ###### Get population-level vectors mu_a|y ######
+    print("probs.shape", probs.shape)
+    print("Yspace_emb.shape", Yspace_emb.shape)
+    mu_pop = np.einsum("ijk,kl->ijl", probs, Yspace_emb).transpose(0, 2, 1)
+    mu_pop_pos, mu_pop_neg = mu_pop[:, :tk, :], mu_pop[:, tk:, :]
+    print("mu_pop_pos.shape", mu_pop_pos.shape)
+    print("mu_pop_neg.shape", mu_pop_neg.shape)
+
+    if debug:
+        # Run over all permutations
+        # for each one get the prob for center y
+        # get the embedding for this permutation
+        # take the sum of probability * embedding for all of these
+        # k x embedding_dim
+        # Put these into M2, M3, try to recover
+        # positive
+        (
+            w_rec,
+            mu_pop_pos_rec1,
+            mu_pop_pos_rec2,
+            mu_pop_pos_rec3,
+        ) = mixture_tensor_decomp_full(
+            w, mu_pop_pos[0, :, :], mu_pop_pos[1, :, :], mu_pop_pos[2, :, :], debug=True
+        )
+        mu_pop_pos_rec = np.array([mu_pop_pos_rec1, mu_pop_pos_rec2, mu_pop_pos_rec3])
+        # negative
+        (
+            w_rec,
+            mu_pop_neg_rec1,
+            mu_pop_neg_rec2,
+            mu_pop_neg_rec3,
+        ) = mixture_tensor_decomp_full(
+            w, mu_pop_neg[0, :, :], mu_pop_neg[1, :, :], mu_pop_neg[2, :, :], debug=True
+        )
+        mu_pop_neg_rec = np.array([mu_pop_neg_rec1, mu_pop_neg_rec2, mu_pop_neg_rec3])
+        # Ok, we get perfect recovery here. Moving on.
+
     ###### Sample proportionally to the probabilities ######
     L = sample_LFs(Yspace, Y_inds, probs, max_m, d)
 
@@ -180,51 +192,83 @@ def main(k=2, d=5, n=1000, max_m=3, debug=True):
     )
     L_emb_pos, L_emb_neg = L_emb[:, :, :tk], L_emb[:, :, tk:]
 
-    ###### Get population-level vectors mu_a|y ######
-    mu_pop = []
-    for center_ind in range(k):
-        L_probs = np.array(
-            [
-                [
-                    probs[lf, center_ind, map_obj_id[str(list(L[i][lf]))]]
-                    for i in range(n)
-                ]
-                for lf in range(max_m)
-            ]
-        )
-        mu_pop.append((L_emb * L_probs[:, :, None]).mean(axis=1))
-    # TODO Not sure if it makes sense to compute these in this way...
-    mu_pop = np.stack(mu_pop).transpose((1, 2, 0))
-    mu_pop_pos, mu_pop_neg = mu_pop[:, :tk, :], mu_pop[:, tk:, :]
-    print(f"mu_pop_pos.shape: {mu_pop_pos.shape}")
-    print(f"mu_pop_neg.shape: {mu_pop_neg.shape}")
-
-    ###### Computing the tensor product and running ######
-    ###### tensor decomposition as a sanity check ######
-    T_pop = sum(
-        [
-            w[i]
-            * (
-                mu_pop_pos[0, :, i][:, None, None]
-                * mu_pop_pos[1, :, i][None, :, None]
-                * mu_pop_pos[2, :, i][None, None, :]
-            )
-            for i in range(k)
-        ]
-    )
-    w_hat_pop, mu_hat_pop = parafac(T_pop, rank=k, normalize_factors=True)
-    print(w_hat_pop / np.sum(w_hat_pop))
-
     ###### Tensor decomposition for + - ######
     ###### TODO run this several times ######
-    w_hat_neg, mu_hat_neg = get_estimated_w_mu(L_emb_neg, k)
-    w_hat_pos, mu_hat_pos = get_estimated_w_mu(L_emb_pos, k)
+    # w_hat_neg, mu_hat_neg = get_estimated_w_mu(L_emb_neg, k)
+    # w_hat_pos, mu_hat_pos = get_estimated_w_mu(L_emb_pos, k)
 
-    print(w_hat_pos / np.sum(w_hat_pos))
+    print(L_emb_pos.shape)
+    (w_rec, mu_hat_pos1, mu_hat_pos2, mu_hat_pos3,) = mixture_tensor_decomp_full(
+        np.ones(n) / n,
+        L_emb_pos[0, :, :].T,
+        L_emb_pos[1, :, :].T,
+        L_emb_pos[2, :, :].T,
+        k=k,
+        debug=debug,
+    )
+    print(mu_hat_pos1.shape)
+
+    T_pos = np.einsum(
+        "i,ji,ki,li->jkl",
+        w,
+        mu_pop_pos[0, :, :],
+        mu_pop_pos[1, :, :],
+        mu_pop_pos[2, :, :],
+    )
+    T_pos_hat = np.einsum(
+        "i,ji,ki,li->jkl",
+        np.ones(n) / n,
+        mu_hat_pos1,
+        mu_hat_pos2,
+        mu_hat_pos3,
+    )
+    print(compute_sign_mse(T_pos, T_pos_hat))
+
+    print(L_emb_neg.shape)
+    (w_rec, mu_hat_neg1, mu_hat_neg2, mu_hat_neg3,) = mixture_tensor_decomp_full(
+        np.ones(n) / n,
+        L_emb_neg[0, :, :].T,
+        L_emb_neg[1, :, :].T,
+        L_emb_neg[2, :, :].T,
+        k=k,
+        debug=debug,
+    )
+    print(mu_hat_neg1.shape)
+
+    T_neg = np.einsum(
+        "i,ji,ki,li->jkl",
+        w,
+        mu_pop_neg[0, :, :],
+        mu_pop_neg[1, :, :],
+        mu_pop_neg[2, :, :],
+    )
+    T_neg_hat = np.einsum(
+        "i,ji,ki,li->jkl",
+        np.ones(n) / n,
+        mu_hat_neg1,
+        mu_hat_neg2,
+        mu_hat_neg3,
+    )
+    print(compute_sign_mse(T_neg, T_neg_hat))
+
     quit()
 
-    print(mu_hat_pos.shape)
-    print(mu_hat_neg.shape)
+    print(w_rec / w_rec.sum())
+    mu_hat_pos = np.array([mu_hat_pos1, mu_hat_pos2, mu_hat_pos3])
+    print(f"mse pos: {compute_sign_mse(mu_hat_pos, mu_pop_pos)}")
+
+    print(L_emb_neg.shape)
+    (w_rec, mu_hat_neg1, mu_hat_neg2, mu_hat_neg3,) = mixture_tensor_decomp_full(
+        np.ones(n) / n,
+        L_emb_neg[0, :, :].T,
+        L_emb_neg[1, :, :].T,
+        L_emb_neg[2, :, :].T,
+        k=k,
+        debug=debug,
+    )
+    print(w_rec / w_rec.sum())
+    mu_hat_neg = np.array([mu_hat_neg1, mu_hat_neg2, mu_hat_neg3])
+    print(f"mse neg: {compute_sign_mse(mu_hat_neg, mu_pop_neg)}")
 
     if debug:
         print()
@@ -238,8 +282,6 @@ def main(k=2, d=5, n=1000, max_m=3, debug=True):
         print(f"w_hat_pos.shape: {w_hat_pos.shape}")
         print(f"mu_hat_pos.shape: {mu_hat_pos.shape}")
         print()
-
-    # Compute true mu using expectations
 
 
 if __name__ == "__main__":
