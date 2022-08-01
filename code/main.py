@@ -155,7 +155,7 @@ def main(k=2, d=4, n=10000, max_m=3, debug=False, seed=42):
 
     # w = np.ones(k) / k  # TODO de-uniformize the prior
     w = np.sort(np.array([0.2, 0.8]))  # Always sort
-    theta_star = np.array([0.6, 0.3, 0.8])  # TODO Change
+    theta_star = np.array([0.6, 0.99, 0.8])  # TODO Change
 
     ###### Embed the entire label space ######
     Yspace, Yspace_emb, tk, map_obj_id = compute_pse_space(d)
@@ -295,6 +295,8 @@ def main(k=2, d=4, n=10000, max_m=3, debug=False, seed=42):
     print(f"MSE(mu_pop_2, mu_hat_2) \t", mse(mu_pop_pos[1, :, :], mu_hat_pos2))
     print(f"MSE(mu_pop_3, mu_hat_3) \t", mse(mu_pop_pos[2, :, :], mu_hat_pos3))
     print(w_rec)
+    w_rec_pos = w_rec
+    mu_hat_pos = np.array([mu_hat_pos1, mu_hat_pos2, mu_hat_pos3])
 
     print(L_emb_neg.shape)
     (w_rec, mu_hat_neg1, mu_hat_neg2, mu_hat_neg3,) = mixture_tensor_decomp_full(
@@ -341,7 +343,8 @@ def main(k=2, d=4, n=10000, max_m=3, debug=False, seed=42):
     print(f"MSE(mu_pop_2, mu_hat_2) \t", mse(mu_pop_neg[1, :, :], mu_hat_neg2))
     print(f"MSE(mu_pop_3, mu_hat_3) \t", mse(mu_pop_neg[2, :, :], mu_hat_neg3))
     print(w_rec)
-    print(mu_hat_neg1.shape)
+    w_rec_neg = w_rec
+    mu_hat_neg = np.array([mu_hat_neg1, mu_hat_neg2, mu_hat_neg3])
 
     #
     # Compute expected squared distance
@@ -368,7 +371,8 @@ def main(k=2, d=4, n=10000, max_m=3, debug=False, seed=42):
                 - 2 * (Yspace_emb_pos[i] @ Y_emb_unique_pos.T)
             )
     print("pos")
-    print(exp_sq_dist_pos)
+    print(w @ exp_sq_dist_pos.T)
+
     # Negative version, population
     exp_sq_dist_neg = np.zeros((max_m, k))
     for lf in range(max_m):
@@ -379,48 +383,50 @@ def main(k=2, d=4, n=10000, max_m=3, debug=False, seed=42):
                 - 2 * (Yspace_emb_neg[i] @ Y_emb_unique_neg.T)
             )
     print("neg")
-    print(exp_sq_dist_neg)
+    print(w @ exp_sq_dist_neg.T)
+
     print("pos - neg")
-    exp_sq_dist_population = exp_sq_dist_pos - exp_sq_dist_neg
+    exp_sq_dist_population = w @ (exp_sq_dist_pos - exp_sq_dist_neg).T
     print(exp_sq_dist_population)
 
-    # Positive version, samples
-    exp_sq_dist_pos_sample = np.zeros((max_m, k))
-    print(L_emb_pos[0, :, :].T.shape)
-    print(Y_emb_unique_pos.shape)
+    ### Using TD ###
+    exp_sq_dist_TD_pos = np.zeros((max_m, k))
     for lf in range(max_m):
-        lambda_norm = (np.linalg.norm(L_emb_pos[lf, :, :], axis=1) ** 2).mean()
-        y_norm = w @ (np.linalg.norm(Y_emb_unique_pos, axis=1) ** 2)
-        lambda_y_inner = (w @ (Y_emb_unique_pos @ L_emb_pos[0, :, :].T)).mean()
-        exp_sq_dist_pos_sample[lf, :] = np.ones(k) * (
-            lambda_norm + y_norm - (2 * lambda_y_inner)
+        exp_sq_dist_TD_pos[lf] = (
+            (np.linalg.norm(L_emb_pos[lf, :, :], axis=1) ** 2).mean()
+            + np.linalg.norm(Y_emb_unique_pos, axis=1) ** 2
+            - 2 * (mu_hat_pos[lf, :, :] * Y_emb_unique_pos.T).sum(axis=0)
         )
-    # Negative version, samples
-    exp_sq_dist_neg_sample = np.zeros((max_m, k))
+    print("using TD (+)")
+    print(w_rec_pos @ exp_sq_dist_TD_pos.T)
+
+    exp_sq_dist_TD_neg = np.zeros((max_m, k))
     for lf in range(max_m):
-        lambda_norm = (np.linalg.norm(L_emb_neg[lf, :, :], axis=1) ** 2).mean()
-        y_norm = w @ (np.linalg.norm(Y_emb_unique_neg, axis=1) ** 2)
-        lambda_y_inner = (w @ (Y_emb_unique_neg @ L_emb_neg[0, :, :].T)).mean()
-        exp_sq_dist_neg_sample[lf, :] = np.ones(k) * (
-            lambda_norm + y_norm - (2 * lambda_y_inner)
+        exp_sq_dist_TD_neg[lf] = (
+            (np.linalg.norm(L_emb_neg[lf, :, :], axis=1) ** 2).mean()
+            + np.linalg.norm(Y_emb_unique_neg, axis=1) ** 2
+            - 2 * (mu_hat_neg[lf, :, :] * Y_emb_unique_neg.T).sum(axis=0)
         )
-    exp_sq_dist_sample = exp_sq_dist_pos_sample - exp_sq_dist_neg_sample
-    print("sample version")
-    print("pos")
-    print(exp_sq_dist_pos_sample)
-    print("neg")
-    print(exp_sq_dist_neg_sample)
+    print("using TD (-)")
+    print(w_rec_neg @ exp_sq_dist_TD_neg.T)
+
     print("pos - neg")
-    print(exp_sq_dist_sample)
+    exp_sq_dist_TD = (w_rec_pos @ exp_sq_dist_TD_pos.T) - (
+        w_rec_neg @ exp_sq_dist_TD_neg.T
+    )
+    print(exp_sq_dist_TD)
 
+    # exp_sq_dist_TD_neg = np.zeros((max_m, k))
     # for lf in range(max_m):
-    #     print(probs[lf, :, :].shape)
-
-    #     #print(np.linalg.norm(L_emb_pos[lf, :, :], axis=2)**2.shape)
-
-    #     print(Y_emb.shape)
-
-    ######## run over the LFs but use the
+    #     exp_sq_dist_TD_neg[lf] = (
+    #         np.linalg.norm(mu_hat_neg[lf, :, :], axis=0) ** 2
+    #         + np.linalg.norm(Y_emb_unique_neg, axis=1) ** 2
+    #         - 2 * (mu_hat_neg[lf, :, :] * Y_emb_unique_neg.T).sum(axis=0)
+    #     )
+    #     print(mu_hat_neg[lf, :, :].shape, Y_emb_unique_neg.T.shape)
+    # print(exp_sq_dist_TD_neg)
+    # print(exp_sq_dist_TD_pos - exp_sq_dist_TD_neg)
+    ### Using TD ###
 
 
 if __name__ == "__main__":
