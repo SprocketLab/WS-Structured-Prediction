@@ -156,6 +156,8 @@ def main(k=2, d=4, n=10000, max_m=3, debug=False, seed=42):
     # w = np.ones(k) / k  # TODO de-uniformize the prior
     w = np.sort(np.array([0.2, 0.8]))  # Always sort
     theta_star = np.array([0.6, 0.99, 0.8])  # TODO Change
+    print(f"using theta_star \t {theta_star}")
+    print(f"using w \t {w}")
 
     ###### Embed the entire label space ######
     Yspace, Yspace_emb, tk, map_obj_id = compute_pse_space(d)
@@ -370,7 +372,7 @@ def main(k=2, d=4, n=10000, max_m=3, debug=False, seed=42):
                 + np.linalg.norm(Y_emb_unique_pos, axis=1) ** 2
                 - 2 * (Yspace_emb_pos[i] @ Y_emb_unique_pos.T)
             )
-    print("pos")
+    print("using population (+)")
     print(w @ exp_sq_dist_pos.T)
 
     # Negative version, population
@@ -382,12 +384,12 @@ def main(k=2, d=4, n=10000, max_m=3, debug=False, seed=42):
                 + np.linalg.norm(Y_emb_unique_neg, axis=1) ** 2
                 - 2 * (Yspace_emb_neg[i] @ Y_emb_unique_neg.T)
             )
-    print("neg")
+    print("using population (-)")
     print(w @ exp_sq_dist_neg.T)
 
-    print("pos - neg")
-    exp_sq_dist_population = w @ (exp_sq_dist_pos - exp_sq_dist_neg).T
-    print(exp_sq_dist_population)
+    print("using population (pos-neg)")
+    exp_sq_dist_pop = w @ (exp_sq_dist_pos - exp_sq_dist_neg).T
+    print(exp_sq_dist_pop)
 
     ### Using TD ###
     exp_sq_dist_TD_pos = np.zeros((max_m, k))
@@ -410,11 +412,15 @@ def main(k=2, d=4, n=10000, max_m=3, debug=False, seed=42):
     print("using TD (-)")
     print(w_rec_neg @ exp_sq_dist_TD_neg.T)
 
-    print("pos - neg")
+    print("using TD (pos-neg)")
     exp_sq_dist_TD = (w_rec_pos @ exp_sq_dist_TD_pos.T) - (
         w_rec_neg @ exp_sq_dist_TD_neg.T
     )
     print(exp_sq_dist_TD)
+
+    print(
+        f"err(exp_sq_dist_pop, exp_sq_dist_TD) \t {np.abs(exp_sq_dist_pop - exp_sq_dist_TD)}"
+    )
 
     # exp_sq_dist_TD_neg = np.zeros((max_m, k))
     # for lf in range(max_m):
