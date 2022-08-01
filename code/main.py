@@ -4,12 +4,12 @@ import os
 import core.pse as pse
 import numpy as np
 import itertools
+import random
 
-from core.ranking_utils import RankingUtils
-from core.ws_ranking import Ranking
+from core.ranking_utils import RankingUtils, Ranking
 import numpy as np
 
-from tensor_decomp import mixture_tensor_decomp_full
+from tensor_decomp import mixture_tensor_decomp_full, mse_perm, max_ae_perm
 import tensorly as tl
 
 
@@ -45,6 +45,19 @@ def sample_LFs(Yspace, Y_inds, probs, m, d):
     ]
 
 
+def kendall_tau_distance(a, b):
+    order_a = list(a.permutation)
+    order_b = list(b.permutation)
+    pairs = itertools.combinations(range(0, len(order_a)), 2)
+    distance = 0
+    for x, y in pairs:
+        a = order_a.index(x) - order_a.index(y)
+        b = order_b.index(x) - order_b.index(y)
+        if a * b < 0:
+            distance += 1
+    return distance
+
+
 # Compute psuedo-euclidean embeddings
 def compute_pse_space(d, dim=0):
     """
@@ -60,11 +73,12 @@ def compute_pse_space(d, dim=0):
     map_obj_id = {str(list(k)): v for v, k in enumerate(Yspace)}
 
     # All pairwise distances
-    r_utils = RankingUtils(d)
-    D = [[r_utils.kendall_tau_distance(r1, r2) ** 2 for r2 in Yspace] for r1 in Yspace]
+    # r_utils = RankingUtils(d)
+    D = [[kendall_tau_distance(r1, r2) ** 2 for r2 in Yspace] for r1 in Yspace]
     D = np.array(D)
 
     Yspace_emb, tk = pse.pseudo_embedding(D, dim)
+
     return Yspace, Yspace_emb, tk, map_obj_id
 
 
@@ -97,16 +111,6 @@ def get_estimated_w_mu(L_emb, k):
     return np.array(w_hat), np.array(mu_hat)
 
 
-def compute_mse(a, b):
-    """"""
-    return np.mean((a - b) ** 2)
-
-
-def compute_sign_mse(a, b):
-    """"""
-    return np.min([compute_mse(a, b), compute_mse(a, -b)])
-
-
 def get_probability_table(space, centers, theta, tk):
     """ """
     potentials = np.zeros((theta.shape[0], space.shape[0], centers.shape[0]))
@@ -115,7 +119,9 @@ def get_probability_table(space, centers, theta, tk):
             lam = space[i, :]
             y = centers[j, :]
             # Compute un-normalized potentials
-            potentials[:, i, j] = np.exp(-theta * pse.pseudo_dist(lam, y, tk=tk) ** 2)
+            d = pse.pseudo_dist(lam, y, tk=tk)
+            potentials[:, i, j] = np.exp(-theta * d**2)
+
     partition = potentials.sum(axis=1, keepdims=True)
     probabilities = potentials / partition
     # Indexing should be (LF indices, Center indices, indices of specific LF values)
@@ -123,11 +129,32 @@ def get_probability_table(space, centers, theta, tk):
     return probabilities
 
 
-def main(k=2, d=4, n=10000, max_m=3, debug=False):
+def get_probability_table_true(space, centers, theta):
     """ """
+    # r_utils = RankingUtils(4)
+    potentials = np.zeros((theta.shape[0], len(space), len(centers)))
+    for i in range(len(space)):  # All possible rankings
+        for j in range(len(centers)):
+            lam = space[i]
+            y = centers[j]
+            # Compute un-normalized potentials
+            d = kendall_tau_distance(lam, y)
+            potentials[:, i, j] = np.exp(-theta * d**2)
+
+    partition = potentials.sum(axis=1, keepdims=True)
+    probabilities = potentials / partition
+    # Indexing should be (LF indices, Center indices, indices of specific LF values)
+    probabilities = probabilities.transpose((0, 2, 1))
+    return probabilities
+
+
+def main(k=2, d=4, n=10000, max_m=3, debug=False, seed=42):
+    """ """
+    random.seed(seed)
+    np.random.seed(seed)
 
     # w = np.ones(k) / k  # TODO de-uniformize the prior
-    w = np.sort(np.array([0.25, 0.75]))  # Always sort
+    w = np.sort(np.array([0.2, 0.8]))  # Always sort
     theta_star = np.array([0.6, 0.3, 0.8])  # TODO Change
 
     ###### Embed the entire label space ######
@@ -141,7 +168,14 @@ def main(k=2, d=4, n=10000, max_m=3, debug=False):
     Y_emb = np.array([Yspace_emb[map_obj_id[str(Y[i])], :] for i in range(n)])
     Y_emb_pos, Y_emb_neg = Y_emb[:, :tk], Y_emb[:, tk:]
     # Compute the full probability table exactly
-    probs = get_probability_table(Yspace_emb, np.unique(Y_emb, axis=0), theta_star, tk)
+    probs = get_probability_table(
+        Yspace_emb,
+        np.array(
+            [Y_emb[np.where(Y_inds == 0)[0][0]], Y_emb[np.where(Y_inds == 1)[0][0]]]
+        ),
+        theta_star,
+        tk,
+    )
 
     ###### Get population-level vectors mu_a|y ######
     print("probs.shape", probs.shape)
@@ -151,34 +185,59 @@ def main(k=2, d=4, n=10000, max_m=3, debug=False):
     print("mu_pop_pos.shape", mu_pop_pos.shape)
     print("mu_pop_neg.shape", mu_pop_neg.shape)
 
-    if debug:
-        # Run over all permutations
-        # for each one get the prob for center y
-        # get the embedding for this permutation
-        # take the sum of probability * embedding for all of these
-        # k x embedding_dim
-        # Put these into M2, M3, try to recover
-        # positive
-        (
-            w_rec,
-            mu_pop_pos_rec1,
-            mu_pop_pos_rec2,
-            mu_pop_pos_rec3,
-        ) = mixture_tensor_decomp_full(
-            w, mu_pop_pos[0, :, :], mu_pop_pos[1, :, :], mu_pop_pos[2, :, :], debug=True
-        )
-        mu_pop_pos_rec = np.array([mu_pop_pos_rec1, mu_pop_pos_rec2, mu_pop_pos_rec3])
-        # negative
-        (
-            w_rec,
-            mu_pop_neg_rec1,
-            mu_pop_neg_rec2,
-            mu_pop_neg_rec3,
-        ) = mixture_tensor_decomp_full(
-            w, mu_pop_neg[0, :, :], mu_pop_neg[1, :, :], mu_pop_neg[2, :, :], debug=True
-        )
-        mu_pop_neg_rec = np.array([mu_pop_neg_rec1, mu_pop_neg_rec2, mu_pop_neg_rec3])
-        # Ok, we get perfect recovery here. Moving on.
+    # if debug:
+    # Run over all permutations
+    # for each one get the prob for center y
+    # get the embedding for this permutation
+    # take the sum of probability * embedding for all of these
+    # k x embedding_dim
+    # Put these into M2, M3, try to recover
+    # positive
+    (
+        w_rec,
+        mu_pop_pos_rec1,
+        mu_pop_pos_rec2,
+        mu_pop_pos_rec3,
+    ) = mixture_tensor_decomp_full(
+        w,
+        mu_pop_pos[0, :, :],
+        mu_pop_pos[1, :, :],
+        mu_pop_pos[2, :, :],
+        debug=True,
+        savedir="T_pos_td",
+    )
+    mu_pop_pos_rec = np.array([mu_pop_pos_rec1, mu_pop_pos_rec2, mu_pop_pos_rec3])
+    T_pos_td = np.einsum(
+        "i,ji,ki,li->jkl",
+        w_rec,
+        mu_pop_pos_rec1,
+        mu_pop_pos_rec2,
+        mu_pop_pos_rec3,
+    )
+
+    # negative
+    (
+        w_rec,
+        mu_pop_neg_rec1,
+        mu_pop_neg_rec2,
+        mu_pop_neg_rec3,
+    ) = mixture_tensor_decomp_full(
+        w,
+        mu_pop_neg[0, :, :],
+        mu_pop_neg[1, :, :],
+        mu_pop_neg[2, :, :],
+        debug=True,
+        savedir="T_neg_td",
+    )
+    mu_pop_neg_rec = np.array([mu_pop_neg_rec1, mu_pop_neg_rec2, mu_pop_neg_rec3])
+    T_neg_td = np.einsum(
+        "i,ji,ki,li->jkl",
+        w_rec,
+        mu_pop_neg_rec1,
+        mu_pop_neg_rec2,
+        mu_pop_neg_rec3,
+    )
+    # Ok, we get perfect recovery here. Moving on.
 
     ###### Sample proportionally to the probabilities ######
     L = sample_LFs(Yspace, Y_inds, probs, max_m, d)
@@ -205,6 +264,7 @@ def main(k=2, d=4, n=10000, max_m=3, debug=False):
         L_emb_pos[2, :, :].T,
         k=k,
         debug=debug,
+        savedir="T_pos_hat",
     )
     print(mu_hat_pos1.shape)
 
@@ -222,7 +282,19 @@ def main(k=2, d=4, n=10000, max_m=3, debug=False):
         mu_hat_pos2,
         mu_hat_pos3,
     )
-    print(compute_sign_mse(T_pos, T_pos_hat))
+    T_pos_samples = np.einsum(
+        "i,ji,ki,li->jkl",
+        np.ones(n) / n,
+        L_emb_pos[0, :, :].T,
+        L_emb_pos[1, :, :].T,
+        L_emb_pos[2, :, :].T,
+    )
+
+    print("positive")
+    print("sampled -- TD(sampled) \t\t", mse_perm(T_pos_samples, T_pos_hat))
+    print("population -- sampled \t\t", mse_perm(T_pos, T_pos_samples))
+    print("population -- TD(population) \t", mse_perm(T_pos, T_pos_td))
+    print("population -- TD(sampled) \t", mse_perm(T_pos, T_pos_hat))
 
     print(L_emb_neg.shape)
     (w_rec, mu_hat_neg1, mu_hat_neg2, mu_hat_neg3,) = mixture_tensor_decomp_full(
@@ -232,6 +304,7 @@ def main(k=2, d=4, n=10000, max_m=3, debug=False):
         L_emb_neg[2, :, :].T,
         k=k,
         debug=debug,
+        savedir="T_neg_hat",
     )
     print(mu_hat_neg1.shape)
 
@@ -249,39 +322,70 @@ def main(k=2, d=4, n=10000, max_m=3, debug=False):
         mu_hat_neg2,
         mu_hat_neg3,
     )
-    print(compute_sign_mse(T_neg, T_neg_hat))
-
-    quit()
-
-    print(w_rec / w_rec.sum())
-    mu_hat_pos = np.array([mu_hat_pos1, mu_hat_pos2, mu_hat_pos3])
-    print(f"mse pos: {compute_sign_mse(mu_hat_pos, mu_pop_pos)}")
-
-    print(L_emb_neg.shape)
-    (w_rec, mu_hat_neg1, mu_hat_neg2, mu_hat_neg3,) = mixture_tensor_decomp_full(
+    T_neg_samples = np.einsum(
+        "i,ji,ki,li->jkl",
         np.ones(n) / n,
         L_emb_neg[0, :, :].T,
         L_emb_neg[1, :, :].T,
         L_emb_neg[2, :, :].T,
-        k=k,
-        debug=debug,
     )
-    print(w_rec / w_rec.sum())
-    mu_hat_neg = np.array([mu_hat_neg1, mu_hat_neg2, mu_hat_neg3])
-    print(f"mse neg: {compute_sign_mse(mu_hat_neg, mu_pop_neg)}")
+    print("negative")
+    print("sampled -- TD(sampled) \t\t", mse_perm(T_neg_samples, T_neg_hat))
+    print("population -- sampled \t\t", mse_perm(T_neg, T_neg_samples))
+    print("population -- TD(population) \t", mse_perm(T_neg, T_neg_td))
+    print("population -- TD(sampled) \t", mse_perm(T_neg, T_neg_hat))
 
-    if debug:
-        print()
-        print(f"Number of permutations: {np.math.factorial(d)}")
-        print(f"Yspace_emb_pos.shape: {Yspace_emb_pos.shape}")
-        print(f"Yspace_emb_neg.shape: {Yspace_emb_neg.shape}")
-        print()
-        print(f"L_emb.shape: {L_emb.shape}")
-        print(f"Y_emb.shape: {Y_emb.shape}")
-        print()
-        print(f"w_hat_pos.shape: {w_hat_pos.shape}")
-        print(f"mu_hat_pos.shape: {mu_hat_pos.shape}")
-        print()
+    # Compute expected squared distance
+    # run over all permutations
+    # sq. dist x probability
+    #
+
+    # print(Yspace_emb.shape)
+
+    Y_emb_unique = np.unique(Y_emb, axis=0)
+    Y_emb_unique_pos, Y_emb_unique_neg = Y_emb_unique[:, :tk], Y_emb_unique[:, tk:]
+    Yspace_emb_pos, Yspace_emb_neg = Yspace_emb[:, :tk], Yspace_emb[:, tk:]
+
+    ########## using formula
+    lf = 0
+    # Positive version
+    exp_sq_dist_pos = np.zeros(k)
+    # for lf in range(max_m):
+    for i in range(Yspace_emb_pos.shape[0]):
+        exp_sq_dist_pos += probs[lf, :, i] * (
+            np.linalg.norm(Yspace_emb_pos[i]) ** 2
+            + np.linalg.norm(Y_emb_unique_pos, axis=1) ** 2
+            - 2 * (Yspace_emb_pos[i] @ Y_emb_unique_pos.T)
+        )
+    print("positive")
+    print(exp_sq_dist_pos.shape)
+    print(exp_sq_dist_pos)
+
+    # Negative version
+
+    # for lf in range(max_m):  # Don't do this
+    exp_sq_dist_neg = np.zeros(k)
+    for i in range(Yspace_emb_neg.shape[0]):
+        exp_sq_dist_neg += probs[lf, :, i] * (
+            np.linalg.norm(Yspace_emb_neg[i]) ** 2
+            + np.linalg.norm(Y_emb_unique_neg, axis=1) ** 2
+            - 2 * (Yspace_emb_neg[i] @ Y_emb_unique_neg.T)
+        )
+    print("negative")
+    print(exp_sq_dist_neg.shape)
+    print(exp_sq_dist_neg)
+
+    print("total")
+    print(exp_sq_dist_pos - exp_sq_dist_neg)
+
+    # for lf in range(max_m):
+    #     print(probs[lf, :, :].shape)
+
+    #     #print(np.linalg.norm(L_emb_pos[lf, :, :], axis=2)**2.shape)
+
+    #     print(Y_emb.shape)
+
+    ######## run over the LFs but use the
 
 
 if __name__ == "__main__":

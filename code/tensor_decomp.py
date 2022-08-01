@@ -1,17 +1,31 @@
 import numpy as np
 import itertools
+import os
 
 mse = lambda a, b: ((a - b) ** 2).mean()
 
 
-def compute_mse(a, b):
+def max_ae(a, b):
     """"""
-    return np.mean((a - b) ** 2)
+    return np.max(np.abs(a - b))
 
 
-def compute_sign_mse(a, b):
-    """"""
-    return np.min([compute_mse(a, b), compute_mse(a, -b)])
+def mse_perm(a, b, return_perm=False):
+    errs = [mse(a, b.transpose(perm)) for perm in itertools.permutations(np.arange(3))]
+    ix = np.argmin(errs)
+    if return_perm:
+        return errs[ix], list(itertools.permutations(np.arange(3)))[ix]
+    return errs[ix]
+
+
+def max_ae_perm(a, b, return_perm=False):
+    errs = [
+        max_ae(a, b.transpose(perm)) for perm in itertools.permutations(np.arange(3))
+    ]
+    ix = np.argmin(errs)
+    if return_perm:
+        return errs[ix], list(itertools.permutations(np.arange(3)))[ix]
+    return errs[ix]
 
 
 def multimap(A, V_array):
@@ -142,24 +156,25 @@ def tensor_decomp(M2, M3, comps):
         v = v[:, idx]
 
         # keep only the positive eigenvalues
-        n_eigpos = np.sum(lam > 10e-10)
+        n_eigpos = np.sum(lam > 1e-1)
         if n_eigpos > 0:
             W = v[:, :n_eigpos] @ np.diag(1.0 / np.sqrt(np.abs(lam[:n_eigpos])))
 
-            B = np.linalg.pinv(W.T)
+            B = np.linalg.pinv(W.T)  # TODO look into this
             M3_tilde = multimap(M3, [W, W, W])  # reduction complete
 
             # decomposition setup
             # TODO try different hps if this doesn't work
-            N = 1000  # number of power iterations
-            restarts = 10  # number of random restarts # NOTE critical
+            N = 10  # number of power iterations
+            restarts = 1000  # number of random restarts # NOTE critical
             tau_star = 0  # best robust eigenvalue so far
             u_star = np.zeros(n_eigpos)  # best eigenvector so far
 
             # repeated restarts to find best eigenvector
             for j in range(restarts):
                 # randomly draw from unit sphere (step 2)
-                u = np.random.rand(n_eigpos)
+                # u = np.random.randn(n_eigpos)
+                u = np.random.multivariate_normal(np.zeros(n_eigpos), np.eye(n_eigpos))
                 u /= np.linalg.norm(u)
 
                 # power iteration for N iterations
@@ -194,34 +209,58 @@ def tensor_decomp(M2, M3, comps):
     return mu_rec, lam_rec
 
 
-def tensor_decomp_x3(w, x1, x2, x3, k=None, debug=False, return_errs=False):
-    # print("[TENSOR_DECOMP] Recovering factor...")
+def lowrank(x, k):
+    u, s, vh = np.linalg.svd(x)
+    s_abs = np.abs(s)
+    inds = np.argsort(s_abs)[::-1][:k]
+    rec = np.zeros_like(x)
+    for i in inds:
+        rec += s[i] * np.outer(u.T[i], vh[i])
+    return rec
+
+
+def tensor_decomp_x3(
+    w, x1, x2, x3, k=None, debug=False, return_errs=False, savedir=None
+):
     if k is None:
         k = w.shape[0]
 
-    # if debug:
-    #     print(f"[TENSOR_DECOMP] w.shape: {w.shape}")
-    #     print(f"[TENSOR_DECOMP] x1.shape: {x1.shape}")
-    #     print(f"[TENSOR_DECOMP] x2.shape: {x2.shape}")
-    #     print(f"[TENSOR_DECOMP] x3.shape: {x3.shape}")
-    #     print(f"[TENSOR_DECOMP] k: {k}")
+    ex32 = lowrank(np.einsum("i,ji,ki->jk", w, x3, x2), k=k)
+    ex12 = lowrank(np.einsum("i,ji,ki->jk", w, x1, x2), k=k)
 
-    ex32 = np.einsum("i,ji,ki->jk", w, x3, x2)
-    ex12 = np.einsum("i,ji,ki->jk", w, x1, x2)
-    ex12_inv = np.linalg.pinv(ex12)
-    ex31 = np.einsum("i,ji,ki->jk", w, x3, x1)
-    ex21 = np.einsum("i,ji,ki->jk", w, x2, x1)
-    ex21_inv = np.linalg.pinv(ex21)
-    x_tilde_1 = (ex32 @ ex12_inv) @ x1
-    x_tilde_2 = (ex31 @ ex21_inv) @ x2
+    ex12_inv = np.linalg.pinv(ex12)  # TODO what's going on here?
+
+    ex31 = lowrank(np.einsum("i,ji,ki->jk", w, x3, x1), k=k)
+    ex21 = lowrank(np.einsum("i,ji,ki->jk", w, x2, x1), k=k)
+
+    ex21_inv = np.linalg.pinv(ex21)  # TODO what's going on here?
+
+    x_tilde_1 = ex32 @ ex12_inv @ x1
+    x_tilde_2 = ex31 @ ex21_inv @ x2
     M2 = np.einsum("i,ji,ki->jk", w, x_tilde_1, x_tilde_2)
     M3 = np.einsum("i,ji,ki,li->jkl", w, x_tilde_1, x_tilde_2, x3)
+
+    if savedir is not None:
+        if not os.path.exists(savedir):
+            os.makedirs(savedir)
+        np.save(savedir + "/" + "ex32", ex32)
+        np.save(savedir + "/" + "ex12", ex12)
+        np.save(savedir + "/" + "ex12_inv", ex12_inv)
+        np.save(savedir + "/" + "ex31", ex31)
+        np.save(savedir + "/" + "ex21", ex21)
+        np.save(savedir + "/" + "ex21_inv", ex21_inv)
+        np.save(savedir + "/" + "x_tilde_1", x_tilde_1)
+        np.save(savedir + "/" + "x_tilde_2", x_tilde_2)
+        np.save(savedir + "/" + "M2", M2)
+        np.save(savedir + "/" + "M3", M3)
+        print("saved")
+
     factors, weights = tensor_decomp(M2, M3, k)
 
     try:
         err = mse(factors, x3)
     except ValueError:
-        print("[TENSOR_DECOMP] cannot compute error due to dimensions...")
+        # print("[TENSOR_DECOMP] cannot compute error due to rank...")
         err = -1.0
     if debug:
         print(f"[TENSOR_DECOMP] error:", err)
@@ -230,31 +269,50 @@ def tensor_decomp_x3(w, x1, x2, x3, k=None, debug=False, return_errs=False):
     return weights, factors
 
 
-def mixture_tensor_decomp_full(w, x1, x2, x3, k=None, debug=False, return_errs=False):
+def mixture_tensor_decomp_full_inner(
+    w, x1, x2, x3, k=None, debug=False, return_errs=False, savedir=None
+):
     w_rec, x3_rec, err_3_12 = tensor_decomp_x3(
-        w, x1, x2, x3, k=k, debug=debug, return_errs=True
+        w, x1, x2, x3, k=k, debug=debug, return_errs=True, savedir=savedir
     )
     w_rec, x2_rec, err_2_13 = tensor_decomp_x3(
-        w, x1, x3, x2, k=k, debug=debug, return_errs=True
+        w, x1, x3, x2, k=k, debug=debug, return_errs=True, savedir=savedir
     )
     w_rec, x1_rec, err_1_23 = tensor_decomp_x3(
-        w, x2, x3, x1, k=k, debug=debug, return_errs=True
+        w, x2, x3, x1, k=k, debug=debug, return_errs=True, savedir=savedir
     )
-    if return_errs:
-        w_rec, x3_rec, err_3_21 = tensor_decomp_x3(
-            w, x2, x1, x3, k=k, debug=debug, return_errs=True
-        )
-        err_3 = np.min([err_3_12, err_3_21])
-        w_rec, x2_rec, err_2_31 = tensor_decomp_x3(
-            w, x3, x1, x2, k=k, debug=debug, return_errs=True
-        )
-        err_2 = np.min([err_2_13, err_2_31])
-        w_rec, x1_rec, err_1_32 = tensor_decomp_x3(
-            w, x3, x2, x1, k=k, debug=debug, return_errs=True
-        )
-        err_1 = np.min([err_1_23, err_1_32])
-        return w_rec, x1_rec, x2_rec, x3_rec, np.array([err_1, err_2, err_3])
     return w_rec, x1_rec, x2_rec, x3_rec
+
+
+def mixture_tensor_decomp_full(w, x1, x2, x3, k=None, debug=False, savedir=None):
+    T = np.einsum("i,ji,ki,li->jkl", w, x1, x2, x3)
+    T_hat = np.zeros_like(T)
+
+    max_iters = 10  # TODO
+    eps = 1e-1
+    err_best = np.inf
+    w_rec_best, x1_rec_best, x2_rec_best, x3_rec_best = None, None, None, None
+    for i in range(max_iters):
+        print(f"ITERATION {i}")
+        w_rec, x1_rec, x2_rec, x3_rec = mixture_tensor_decomp_full_inner(
+            w, x1, x2, x3, k=k, debug=False, savedir=savedir
+        )
+        T_hat = np.einsum("i,ji,ki,li->jkl", w_rec, x1_rec, x2_rec, x3_rec)
+
+        err, perm = mse_perm(T, T_hat, return_perm=True)
+        if err <= err_best:
+            w_rec_best, x1_rec_best, x2_rec_best, x3_rec_best = (
+                w_rec,
+                x1_rec,
+                x2_rec,
+                x3_rec,
+            )
+            err_best = err
+        print(err, perm)
+        if err <= eps:
+            return w_rec_best, x1_rec_best, x2_rec_best, x3_rec_best
+
+    return w_rec_best, x1_rec_best, x2_rec_best, x3_rec_best
 
 
 def main():
@@ -273,7 +331,11 @@ def main():
             w, x1, x2, x3, debug=True
         )
 
-        print(np.sort(w_rec)[0], np.sort(w)[0])
+        T = np.einsum("i,ji,ki,li->jkl", w, x1, x2, x3)
+        T_rec = np.einsum("i,ji,ki,li->jkl", w_rec, x1_rec, x2_rec, x3_rec)
+
+        # print(np.sort(w_rec)[0], np.sort(w)[0])
+        print(mse_perm(T, T_rec, return_perm=True))
 
 
 if __name__ == "__main__":
