@@ -2,7 +2,10 @@ import numpy as np
 import itertools
 import os
 
-mse = lambda a, b: ((a - b) ** 2).mean()
+
+def mse(a, b):
+    """"""
+    return ((a - b) ** 2).mean()
 
 
 def max_ae(a, b):
