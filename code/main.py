@@ -143,6 +143,7 @@ def main(k=2, d=4, n=10000, max_m=3, debug=False, seed=42, theta_1=None):
     w = np.sort(np.array([0.2, 0.8]))
     print(f"using w \t {w}")
 
+    # NOTE change this depending on the experiment 
     theta_star = np.array([0.0, 0.0, 1.0])
     if theta_1 is not None:
         # Assume theta_1 is in [0, 1]
