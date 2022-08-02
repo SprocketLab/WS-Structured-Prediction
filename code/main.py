@@ -184,13 +184,6 @@ def main(k=2, d=4, n=10000, max_m=3, debug=False, seed=42):
     print("mu_pop_pos.shape", mu_pop_pos.shape)
     print("mu_pop_neg.shape", mu_pop_neg.shape)
 
-    # if debug:
-    # Run over all permutations
-    # for each one get the prob for center y
-    # get the embedding for this permutation
-    # take the sum of probability * embedding for all of these
-    # k x embedding_dim
-    # Put these into M2, M3, try to recover
     # positive
     (
         w_rec,
@@ -203,7 +196,7 @@ def main(k=2, d=4, n=10000, max_m=3, debug=False, seed=42):
         mu_pop_pos[1, :, :],
         mu_pop_pos[2, :, :],
         debug=True,
-        savedir="T_pos_td",
+        # savedir="T_pos_td",
     )
     mu_pop_pos_rec = np.array([mu_pop_pos_rec1, mu_pop_pos_rec2, mu_pop_pos_rec3])
     T_pos_td = np.einsum(
@@ -226,7 +219,7 @@ def main(k=2, d=4, n=10000, max_m=3, debug=False, seed=42):
         mu_pop_neg[1, :, :],
         mu_pop_neg[2, :, :],
         debug=True,
-        savedir="T_neg_td",
+        # savedir="T_neg_td",
     )
     mu_pop_neg_rec = np.array([mu_pop_neg_rec1, mu_pop_neg_rec2, mu_pop_neg_rec3])
     T_neg_td = np.einsum(
@@ -259,7 +252,7 @@ def main(k=2, d=4, n=10000, max_m=3, debug=False, seed=42):
         L_emb_pos[2, :, :].T,
         k=k,
         debug=debug,
-        savedir="T_pos_hat",
+        # savedir="T_pos_hat",
     )
     print(mu_hat_pos1.shape)
 
@@ -271,11 +264,7 @@ def main(k=2, d=4, n=10000, max_m=3, debug=False, seed=42):
         mu_pop_pos[2, :, :],
     )
     T_pos_hat = np.einsum(
-        "i,ji,ki,li->jkl",
-        w_rec,
-        mu_hat_pos1,
-        mu_hat_pos2,
-        mu_hat_pos3,
+        "i,ji,ki,li->jkl", w_rec, mu_hat_pos1, mu_hat_pos2, mu_hat_pos3
     )
     T_pos_samples = np.einsum(
         "i,ji,ki,li->jkl",
@@ -308,7 +297,7 @@ def main(k=2, d=4, n=10000, max_m=3, debug=False, seed=42):
         L_emb_neg[2, :, :].T,
         k=k,
         debug=debug,
-        savedir="T_neg_hat",
+        # savedir="T_neg_hat",
     )
     print(mu_hat_neg1.shape)
 
@@ -320,11 +309,7 @@ def main(k=2, d=4, n=10000, max_m=3, debug=False, seed=42):
         mu_pop_neg[2, :, :],
     )
     T_neg_hat = np.einsum(
-        "i,ji,ki,li->jkl",
-        w_rec,
-        mu_hat_neg1,
-        mu_hat_neg2,
-        mu_hat_neg3,
+        "i,ji,ki,li->jkl", w_rec, mu_hat_neg1, mu_hat_neg2, mu_hat_neg3
     )
     T_neg_samples = np.einsum(
         "i,ji,ki,li->jkl",
@@ -422,17 +407,24 @@ def main(k=2, d=4, n=10000, max_m=3, debug=False, seed=42):
         f"err(exp_sq_dist_pop, exp_sq_dist_TD) \t {np.abs(exp_sq_dist_pop - exp_sq_dist_TD)}"
     )
 
-    # exp_sq_dist_TD_neg = np.zeros((max_m, k))
-    # for lf in range(max_m):
-    #     exp_sq_dist_TD_neg[lf] = (
-    #         np.linalg.norm(mu_hat_neg[lf, :, :], axis=0) ** 2
-    #         + np.linalg.norm(Y_emb_unique_neg, axis=1) ** 2
-    #         - 2 * (mu_hat_neg[lf, :, :] * Y_emb_unique_neg.T).sum(axis=0)
-    #     )
-    #     print(mu_hat_neg[lf, :, :].shape, Y_emb_unique_neg.T.shape)
-    # print(exp_sq_dist_TD_neg)
-    # print(exp_sq_dist_TD_pos - exp_sq_dist_TD_neg)
-    ### Using TD ###
+    ######### Perform UWS distance estimation #########
+    # print(L_emb.shape)
+    L1 = L_emb[0]
+    L2 = L_emb[1]
+    L3 = L_emb[2]
+    e_L1_L2 = np.mean([pse.pseudo_dist(L1[i], L2[i], tk=tk) for i in range(n)])
+    e_L1_L3 = np.mean([pse.pseudo_dist(L1[i], L3[i], tk=tk) for i in range(n)])
+    e_L2_L3 = np.mean([pse.pseudo_dist(L1[i], L3[i], tk=tk) for i in range(n)])
+    # print(e_L1_L2, e_L1_L3, e_L2_L3)
+    e_L1_y = 1.0 / 2 * (e_L1_L2 + e_L1_L3 - e_L2_L3)
+    e_L2_y = 1.0 / 2 * (e_L1_L2 + e_L2_L3 - e_L1_L3)
+    e_L3_y = 1.0 / 2 * (e_L1_L3 + e_L2_L3 - e_L1_L2)
+    exp_sq_dist_UWS = np.array([e_L1_y, e_L2_y, e_L3_y])
+    print(
+        f"err(exp_sq_dist_pop, exp_sq_dist_UWS) \t {np.abs(exp_sq_dist_pop - exp_sq_dist_UWS)}"
+    )
+
+    ######### End model taining using TD and UWS parameter estimates #########
 
 
 if __name__ == "__main__":
