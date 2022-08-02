@@ -143,7 +143,7 @@ def main(k=2, d=4, n=10000, max_m=3, debug=False, seed=42, theta_1=None):
     w = np.sort(np.array([0.2, 0.8]))
     print(f"using w \t {w}")
 
-    # NOTE change this depending on the experiment 
+    # NOTE change this depending on the experiment
     theta_star = np.array([0.0, 0.0, 1.0])
     if theta_1 is not None:
         # Assume theta_1 is in [0, 1]
@@ -403,7 +403,6 @@ def main(k=2, d=4, n=10000, max_m=3, debug=False, seed=42, theta_1=None):
 
     ######### Perform UWS distance estimation #########
     # print(L_emb.shape)
-    # TODO check if this is right?
     L1 = L_emb[0]
     L2 = L_emb[1]
     L3 = L_emb[2]
@@ -452,10 +451,6 @@ def main(k=2, d=4, n=10000, max_m=3, debug=False, seed=42, theta_1=None):
     print(f"TD LM accuracy: \t{lm_acc_td}")
     print(f"UWS LM accuracy:\t{lm_acc_uws}")
 
-    # Sweep values of theta or low-n
-    # train end-model
-    # Dump these into the appendix and write a description
-    # add imgur links
     x_true, _y = mapped_make_classification(y_true)
     assert (_y == y_true).all()  # make sure we've mapped properly
 
