@@ -1,16 +1,32 @@
 import fire
-import sys
-import os
 import core.pse as pse
 import numpy as np
 import itertools
 import random
-
-from core.ranking_utils import RankingUtils, Ranking
 import numpy as np
 
-from tensor_decomp import mixture_tensor_decomp_full, mse_perm, max_ae_perm, mse
-import tensorly as tl
+from sklearn.datasets import make_classification
+from tensor_decomp import mixture_tensor_decomp_full, mse_perm, mse
+from core.ranking_utils import RankingUtils, Ranking
+from sklearn.metrics import accuracy_score
+from sklearn.linear_model import LogisticRegression
+
+
+def mapped_make_classification(y, expansion=2):
+    x_c, y_c = make_classification(n_samples=len(y) * expansion)
+    x_c_0 = x_c[np.where(y_c == 0)]
+    y_c_0 = y_c[np.where(y_c == 0)]
+    x_c_1 = x_c[np.where(y_c == 1)]
+    y_c_1 = y_c[np.where(y_c == 1)]
+    x = np.zeros((len(y), x_c.shape[1]))
+    y_recon = np.zeros(len(y))
+    x[np.where(y == 0)] = x_c_0[: (sum(y == 0))]
+    x[np.where(y == 1)] = x_c_1[: (sum(y == 1))]
+    # Sanity check
+    y_recon[np.where(y == 0)] = y_c_0[: (sum(y == 0))]
+    y_recon[np.where(y == 1)] = y_c_1[: (sum(y == 1))]
+    assert sum(y_recon - y) == 0.0
+    return x, y
 
 
 def generate_true_rankings(d, n, k, w):
@@ -82,35 +98,6 @@ def compute_pse_space(d, dim=0):
     return Yspace, Yspace_emb, tk, map_obj_id
 
 
-def get_estimated_w_mu(L_emb, k):
-    """
-    L_emb: LF output embeddings
-    k: rank of tensor decomposition/number of centers
-    """
-    # T_hat = (
-    #    L_emb[0, :, :][:, :, None, None]
-    #    * L_emb[1, :, :][:, None, :, None]
-    #    * L_emb[2, :, :][:, None, None, :]
-    # ).mean(axis=0)
-
-    print("tensor")
-    T_hat = np.einsum("ij,ik,il->jkl", L_emb[0], L_emb[1], L_emb[2])
-    print(L_emb)
-    print(T_hat.shape)
-
-    # Compute tensor decomposition
-    # TODO try different things
-    weights, factors = tl.decomposition.parafac_power_iteration(T_hat, rank=k)
-    T_hat_cp = tl.cp_tensor.CPTensor((weights, factors))
-    T_hat_cp_norm = T_hat_cp  # tl.cp_tensor.cp_normalize(T_hat_cp)
-    w_hat, mu_hat = T_hat_cp_norm.weights, T_hat_cp_norm.factors
-    print(w_hat / w_hat.sum())
-    quit()
-
-    # w_hat, mu_hat = parafac(T_hat, rank=k, normalize_factors=True)
-    return np.array(w_hat), np.array(mu_hat)
-
-
 def get_probability_table(space, centers, theta, tk):
     """ """
     potentials = np.zeros((theta.shape[0], space.shape[0], centers.shape[0]))
@@ -148,16 +135,19 @@ def get_probability_table_true(space, centers, theta):
     return probabilities
 
 
-def main(k=2, d=4, n=10000, max_m=3, debug=False, seed=42):
+def main(k=2, d=4, n=10000, max_m=3, debug=False, seed=42, theta_1=None):
     """ """
     random.seed(seed)
     np.random.seed(seed)
 
-    # w = np.ones(k) / k  # TODO de-uniformize the prior
-    w = np.sort(np.array([0.2, 0.8]))  # Always sort
-    theta_star = np.array([0.6, 0.99, 0.8])  # TODO Change
-    print(f"using theta_star \t {theta_star}")
+    w = np.sort(np.array([0.2, 0.8]))
     print(f"using w \t {w}")
+
+    theta_star = np.array([0.0, 0.0, 1.0])
+    if theta_1 is not None:
+        # Assume theta_1 is in [0, 1]
+        theta_star = np.array([0.0, 1.0 - theta_1, theta_1])
+    print(f"using theta_star \t {theta_star}")
 
     ###### Embed the entire label space ######
     Yspace, Yspace_emb, tk, map_obj_id = compute_pse_space(d)
@@ -407,8 +397,12 @@ def main(k=2, d=4, n=10000, max_m=3, debug=False, seed=42):
         f"err(exp_sq_dist_pop, exp_sq_dist_TD) \t {np.abs(exp_sq_dist_pop - exp_sq_dist_TD)}"
     )
 
+    thetas_td = np.ones_like(exp_sq_dist_TD) / exp_sq_dist_TD
+    thetas_td /= thetas_td.sum()
+
     ######### Perform UWS distance estimation #########
     # print(L_emb.shape)
+    # TODO check if this is right?
     L1 = L_emb[0]
     L2 = L_emb[1]
     L3 = L_emb[2]
@@ -424,7 +418,62 @@ def main(k=2, d=4, n=10000, max_m=3, debug=False, seed=42):
         f"err(exp_sq_dist_pop, exp_sq_dist_UWS) \t {np.abs(exp_sq_dist_pop - exp_sq_dist_UWS)}"
     )
 
+    thetas_uws = np.ones_like(exp_sq_dist_UWS) / exp_sq_dist_UWS
+    thetas_uws /= thetas_uws.sum()
+
     ######### End model taining using TD and UWS parameter estimates #########
+
+    print("### THETA COMPARISON ###")
+    print("thetas*:\t", theta_star / theta_star.sum())
+    print("thetas_td:\t", thetas_td)
+    print("thetas_ws:\t", thetas_uws)
+
+    def run_inference(thetas):
+        """Assumes two centers"""
+        # Compute the weighted Fréchet mean
+        fréchets_td = np.einsum("i,ijk->jk", thetas, L_emb)
+        centers = np.tile(Y_emb_unique, (n, 1, 1))
+        dists_0 = [
+            pse.pseudo_dist(fréchets_td[i], centers[i, 0, :], tk=tk) for i in range(n)
+        ]
+        dists_1 = [
+            pse.pseudo_dist(fréchets_td[i], centers[i, 1, :], tk=tk) for i in range(n)
+        ]
+        dists_to_centers = np.array([dists_0, dists_1])
+        preds = np.argmin(dists_to_centers, axis=0)
+        return preds
+
+    y_true = Y_inds
+    preds_uws = run_inference(thetas_uws)
+    preds_td = run_inference(thetas_td)
+    lm_acc_uws = accuracy_score(y_true[n // 2 :], preds_uws[n // 2 :])
+    lm_acc_td = accuracy_score(y_true[n // 2 :], preds_td[n // 2 :])
+    print(f"TD LM accuracy: \t{lm_acc_td}")
+    print(f"UWS LM accuracy:\t{lm_acc_uws}")
+
+    # Sweep values of theta or low-n
+    # train end-model
+    # Dump these into the appendix and write a description
+    # add imgur links
+    x_true, _y = mapped_make_classification(y_true)
+    assert (_y == y_true).all()  # make sure we've mapped properly
+
+    # Train clf on
+    # (x_true[:n//2], preds_uws[:n//2]) then on
+    # (x_true[:n//2], preds_td[:n//2])
+    # Evaluate both on
+    # (x_true[n//2:], y_true[n//2:])
+    ### TD end model training
+    clf = LogisticRegression(random_state=seed)
+    clf.fit(x_true[: n // 2], preds_td[: n // 2])
+    em_acc_td = clf.score(x_true[n // 2 :], y_true[n // 2 :])
+    ### UWS end model training
+    clf = LogisticRegression(random_state=seed)
+    clf.fit(x_true[: n // 2], preds_uws[: n // 2])
+    em_acc_uws = clf.score(x_true[n // 2 :], y_true[n // 2 :])
+    # Report scores
+    print(f"TD EM accuracy: \t{em_acc_td}")
+    print(f"UWS EM accuracy:\t{em_acc_uws}")
 
 
 if __name__ == "__main__":
